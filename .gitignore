@@ -1,0 +1,32 @@
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Build output (not used here, kept for future-proofing)
+dist/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.history/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — NEVER commit
+.npmrc
+.env
+.env.*
+!.env.example
+
+# npm pack output
+*.tgz

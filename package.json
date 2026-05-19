@@ -1,0 +1,61 @@
+{
+  "name": "optkit-display-operations",
+  "version": "0.1.0",
+  "description": "Framework-agnostic Web Component for displaying automotive repair operations details. Pure vanilla JS, Shadow DOM isolated, no runtime dependencies.",
+  "type": "module",
+  "main": "./src/web-components/OptKitRepairMethods/index.js",
+  "module": "./src/web-components/OptKitRepairMethods/index.js",
+  "exports": {
+    ".": {
+      "import": "./src/web-components/OptKitRepairMethods/index.js",
+      "default": "./src/web-components/OptKitRepairMethods/index.js"
+    },
+    "./display-operations-details": "./src/web-components/OptKitRepairMethods/DisplayOperationsDetailsWC.js",
+    "./methods-details": "./src/web-components/OptKitRepairMethods/operationDetails/MethodsDetailsWC.js",
+    "./package.json": "./package.json"
+  },
+  "unpkg": "./src/web-components/OptKitRepairMethods/index.js",
+  "jsdelivr": "./src/web-components/OptKitRepairMethods/index.js",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "demo": "npx serve .",
+    "lint": "echo 'No lint configured — code is vanilla JS'"
+  },
+  "keywords": [
+    "web-component",
+    "custom-element",
+    "shadow-dom",
+    "automotive",
+    "repair",
+    "operations",
+    "framework-agnostic",
+    "vanilla-js"
+  ],
+  "author": {
+    "name": "IPD Automotive",
+    "email": "romain.pierillas@infopro-digital.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/display-operations-details-wc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/display-operations-details-wc/issues"
+  },
+  "homepage": "https://github.com/your-org/display-operations-details-wc#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": [
+    "./src/web-components/**/*.js"
+  ]
+}
