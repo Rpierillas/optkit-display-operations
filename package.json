@@ -1,6 +1,6 @@
 {
   "name": "optkit-display-operations",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Framework-agnostic Web Component for displaying automotive repair operations details. Pure vanilla JS, Shadow DOM isolated, no runtime dependencies.",
   "type": "module",
   "main": "./src/web-components/OptKitRepairMethods/index.js",
