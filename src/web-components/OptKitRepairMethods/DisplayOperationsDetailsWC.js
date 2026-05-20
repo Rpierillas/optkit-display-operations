@@ -426,10 +426,56 @@ class DisplayOperationsDetails extends HTMLElement {
       this.shadowRoot.innerHTML = this._getStyles() + this._generateHTML()
       this._domReady = true
 
-      Promise.resolve().then(() => this._attachEventListeners())
+      Promise.resolve().then(async () => {
+        this._attachEventListeners()
+        await this._hydrateOpenPanels()
+      })
     } catch (error) {
       console.error('❌ DisplayOperationsDetails render error:', error)
     }
+  }
+
+  /**
+   * Hydrate les panneaux ouverts par défaut après le render initial.
+   * Sans ça, les panneaux pré-ouverts affichent un <methods-details>
+   * inerte (lazy-load non déclenché + ref non configurée).
+   */
+  async _hydrateOpenPanels() {
+    const od = this._operationsDetails[0]
+    if (!od) return
+
+    // Détermine si au moins un panneau ouvert nécessite methods-details
+    const itemsNeedMD = this._itemsPanelOpen.some((i) => {
+      const item = od.items?.[i]
+      return item && !this._checkCodeUCType(item.code)
+    })
+    const childrenNeedMD = this._childrensPanelOpen.length > 0
+
+    if (itemsNeedMD || childrenNeedMD) {
+      await this._loadMethodsDetails()
+    }
+
+    // Laisse le navigateur upgrade les <methods-details> nouvellement registered
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Configure les refs des items ouverts
+    this._itemsPanelOpen.forEach((index) => {
+      const wc = this._itemRefs.get(index)
+      if (wc) this._configureItemRef(wc, index, od)
+    })
+
+    // Configure les refs des children ouverts
+    this._childrensPanelOpen.forEach((index) => {
+      const sortedChildren = this._getSortedChildren(od)
+      const childItem = sortedChildren?.[index]
+      if (childItem?.items) {
+        childItem.items.forEach((_, operationsIndex) => {
+          const key = `${index}-${operationsIndex}`
+          const wc = this._childrenRefs.get(key)
+          if (wc) this._configureChildrenRef(wc, index, operationsIndex, od)
+        })
+      }
+    })
   }
 
   _generateHTML() {

@@ -1,6 +1,6 @@
 {
   "name": "optkit-display-operations",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Framework-agnostic Web Component for displaying automotive repair operations details. Pure vanilla JS, Shadow DOM isolated, no runtime dependencies.",
   "type": "module",
   "main": "./src/web-components/OptKitRepairMethods/index.js",
@@ -42,12 +42,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/display-operations-details-wc.git"
+    "url": "git+https://github.com/Rpierillas/display-operations-details-wc.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/display-operations-details-wc/issues"
+    "url": "https://github.com/Rpierillas/display-operations-details-wc/issues"
   },
-  "homepage": "https://github.com/your-org/display-operations-details-wc#readme",
+  "homepage": "https://github.com/Rpierillas/display-operations-details-wc#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"

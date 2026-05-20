@@ -9,6 +9,7 @@ node_modules/
 
 # Build output (not used here, kept for future-proofing)
 dist/
+.history
 
 # Editor
 .vscode/*
