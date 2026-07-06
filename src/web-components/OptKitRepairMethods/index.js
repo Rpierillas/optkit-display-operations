@@ -19,6 +19,7 @@
 // Utilitaires
 export { default as TableWrapper }      from './common/TableWrapperWC.js'
 export { default as SchematicsModal }   from './common/SchematicsModalWC.js'
+export { default as LocationSchematicsUC } from './common/LocationSchematicsUCWC.js'
 
 // Ajustements
 export { default as AdjustmentDefault } from './operationDetails/components/adjustmentDataGroup/Adjustement-DefaultWC.js'
