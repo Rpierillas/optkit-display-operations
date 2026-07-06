@@ -17,6 +17,7 @@ class LocationSystems extends HTMLElement {
     this.attachShadow({ mode: 'open' })
     this._systems = null
     this._isPrint = false
+    this._clickRegistry = []
   }
 
   static get observedAttributes() {
@@ -35,12 +36,23 @@ class LocationSystems extends HTMLElement {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  _haynesLang = 'en'
+  _haynesLang = ''
   set haynesLang(v) { this._haynesLang = v; this._render() }
 
   _hl(map) {
     if (!map) return ''
-    return map[this._haynesLang] || map[2057] || map['en'] || Object.values(map).find(v => v) || ''
+    if (!map || typeof map !== 'object') return ''
+    const isFilled = (v) => typeof v === 'string' && v.trim() !== ''
+    // 1. Override explicite éventuel (haynes-lang défini par l'hôte)
+    if (this._haynesLang && isFilled(map[this._haynesLang])) return map[this._haynesLang]
+    // 2. Langue demandée à l'API : la clé non-anglaise du map (contrat HaynesPro :
+    //    le map contient 2057 (EN, toujours) + la langue du request header)
+    for (const key of Object.keys(map)) {
+      if (key !== '2057' && isFilled(map[key])) return map[key]
+    }
+    // 3. Anglais par défaut
+    if (isFilled(map['2057'])) return map['2057']
+    return Object.values(map).find(isFilled) || ''
   }
 
   get hasItems() {
@@ -183,18 +195,23 @@ class LocationSystems extends HTMLElement {
 
   _renderItems(items, locationId) {
     if (!items?.length) return ''
-    return items.map(item => `
-      <div class="location-item" data-item-id="${item.id || ''}" data-location-id='${JSON.stringify(locationId || [])}'>
+    return items.map(item => {
+      // Registre clic → item : évite le lookup par id (fragile si item.id absent)
+      const clickIdx = this._clickRegistry.push({ item, locationId }) - 1
+      return `
+      <div class="location-item" data-click-index="${clickIdx}">
         <span class="item-label">${this._hl(item.description?.map)}</span>
         <svg class="item-arrow" viewBox="0 0 24 24" width="16" height="16">
           <path fill="currentColor" d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/>
         </svg>
       </div>
-    `).join('')
+    `
+    }).join('')
   }
 
   _render() {
     const sys = this._systems
+    this._clickRegistry = []
     if (!sys || (!sys.items?.length && !sys.subItems?.length)) {
       this.shadowRoot.innerHTML = this._getStyles()
       return
@@ -232,13 +249,8 @@ class LocationSystems extends HTMLElement {
     this.shadowRoot.querySelectorAll('.location-item').forEach(el => {
       el.addEventListener('click', () => {
         if (this._isPrint) return
-        try {
-          const locationId = JSON.parse(el.dataset.locationId || '[]')
-          const itemId = el.dataset.itemId
-          const item = [...(this._systems?.items || []), ...(this._systems?.subItems?.flatMap(s => s.items) || [])]
-            .find(i => String(i.id) === itemId)
-          if (item) this._handleItemClick(item, locationId)
-        } catch (e) { /* noop */ }
+        const entry = this._clickRegistry[parseInt(el.dataset.clickIndex, 10)]
+        if (entry) this._handleItemClick(entry.item, entry.locationId)
       })
     })
 

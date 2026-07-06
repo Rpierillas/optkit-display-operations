@@ -31,7 +31,7 @@ class RepairsEngine extends HTMLElement {
     this._instruction = null
     this._groupId = null
     this._isPrint = false
-    this._haynesLang = '2057' // English par défaut
+    this._haynesLang = ''
     this._isMobile = false
     this._displayIdentificationMethods = false
     this._imageItem = []
@@ -131,7 +131,7 @@ class RepairsEngine extends HTMLElement {
   }
 
   set haynesLang(value) {
-    this._haynesLang = value || this.HAYNES_DEFAULT_LANG
+    this._haynesLang = value || ''
     this._render()
   }
 
@@ -214,8 +214,15 @@ class RepairsEngine extends HTMLElement {
   _formatHaynesLang(map) {
     if (!map || typeof map !== 'object') return ''
 
-    const currentLang = this._haynesLang || this.HAYNES_DEFAULT_LANG
-    let text = map[currentLang] || map[this.HAYNES_DEFAULT_LANG] || ''
+    const isFilled = (v) => typeof v === 'string' && v.trim() !== ''
+    let text = ''
+    // 1. Override explicite, 2. langue non-anglaise du map (= langue du request header), 3. EN
+    if (this._haynesLang && isFilled(map[this._haynesLang])) {
+      text = map[this._haynesLang]
+    } else {
+      text = Object.keys(map).map(k => k !== '2057' && isFilled(map[k]) ? map[k] : '').find(Boolean)
+        || (isFilled(map['2057']) ? map['2057'] : '')
+    }
     const anchor = map[this.HAYNES_DEFAULT_LANG] || '' // Texte anglais
 
     if (!text || typeof text !== 'string') return ''

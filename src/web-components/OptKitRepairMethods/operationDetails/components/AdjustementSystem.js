@@ -31,7 +31,7 @@ class AdjustmentDataGroup extends HTMLElement {
     this._componentIndex = 0
     this._component = {}
     this._adjustmentIndex = 0
-    this._haynesLang = '2057'
+    this._haynesLang = ''
 
     // Refs vers les Web Components enfants
     this.steeringComponentRef = null
@@ -178,7 +178,7 @@ class AdjustmentDataGroup extends HTMLElement {
   }
 
   set haynesLang(value) {
-    this._haynesLang = value || '2057'
+    this._haynesLang = value || ''
     if (this.isConnected && this._isInitialized) {
       this.updateChildComponents()
     }

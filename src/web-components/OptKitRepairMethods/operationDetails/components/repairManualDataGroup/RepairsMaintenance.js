@@ -17,7 +17,7 @@ class RepairsMaintenance extends HTMLElement {
     this._operationsDetails = null
     this._groupId = null
     this._isPrint = false
-    this._haynesLang = '2057'
+    this._haynesLang = ''
   }
 
   // ========================================
@@ -70,7 +70,7 @@ class RepairsMaintenance extends HTMLElement {
   }
 
   set haynesLang(value) {
-    this._haynesLang = value || '2057'
+    this._haynesLang = value || ''
     this._render()
   }
 
@@ -173,8 +173,18 @@ class RepairsMaintenance extends HTMLElement {
    * Formater le texte multilingue
    */
   _formatHaynesLang(map) {
-    if (!map) return ''
-    return map[this._haynesLang] || map[HAYNES_DEFAULT_LANG] || ''
+    if (!map || typeof map !== 'object') return ''
+    const isFilled = (v) => typeof v === 'string' && v.trim() !== ''
+    // 1. Override explicite éventuel (haynes-lang défini par l'hôte)
+    if (this._haynesLang && isFilled(map[this._haynesLang])) return map[this._haynesLang]
+    // 2. Langue demandée à l'API : la clé non-anglaise du map (contrat HaynesPro :
+    //    le map contient 2057 (EN, toujours) + la langue du request header)
+    for (const key of Object.keys(map)) {
+      if (key !== '2057' && isFilled(map[key])) return map[key]
+    }
+    // 3. Anglais par défaut
+    if (isFilled(map['2057'])) return map['2057']
+    return Object.values(map).find(isFilled) || ''
   }
 
   /**

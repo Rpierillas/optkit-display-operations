@@ -51,7 +51,7 @@ class RepairsDataGroup extends HTMLElement {
     this._item = {};
     this._index = 0;
     this._useWebComponent = true;
-    this._haynesLang = '2057';
+    this._haynesLang = '';
     this._isOpened = null;
 
     // Refs des composants enfants
@@ -189,7 +189,7 @@ class RepairsDataGroup extends HTMLElement {
 
   set haynesLang(value) {
     if (this._haynesLang !== value) {
-      this._haynesLang = value || '2057';
+      this._haynesLang = value || '';
       this._updateChildComponents();
     }
   }

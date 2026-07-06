@@ -21,7 +21,7 @@ class AdjustmentDefault extends HTMLElement {
     this._component = {}
     this._adjustmentIndex = 0
     this._componentIndex = 0
-    this._haynesLang = '2057'
+    this._haynesLang = ''
     this._isPrint = false
     this._group = ''
 
@@ -130,7 +130,7 @@ class AdjustmentDefault extends HTMLElement {
 
   set haynesLang(value) {
     if (this._haynesLang !== value) {
-      this._haynesLang = value || '2057'
+      this._haynesLang = value || ''
       if (this.isConnected) {
         this.render()
       }
@@ -216,18 +216,18 @@ class AdjustmentDefault extends HTMLElement {
   }
 
   formatHaynesLang(map) {
-    console.log(map)
-    if (!map) return ''
-
-    // 1. Essayer la langue demandée par l'utilisateur
-    const keys = Object.keys(map)
-    for (const key of keys) {
-      if (key !== this.HAYNES_DEFAULT_LANG && map[key].trim() !== '') {
-        return map[key]
-      } else {
-        return map[this.HAYNES_DEFAULT_LANG]
-      }
+    if (!map || typeof map !== 'object') return ''
+    const isFilled = (v) => typeof v === 'string' && v.trim() !== ''
+    // 1. Override explicite éventuel (haynes-lang défini par l'hôte)
+    if (this._haynesLang && isFilled(map[this._haynesLang])) return map[this._haynesLang]
+    // 2. Langue demandée à l'API : la clé non-anglaise du map (contrat HaynesPro :
+    //    le map contient 2057 (EN, toujours) + la langue du request header)
+    for (const key of Object.keys(map)) {
+      if (key !== '2057' && isFilled(map[key])) return map[key]
     }
+    // 3. Anglais par défaut
+    if (isFilled(map['2057'])) return map['2057']
+    return Object.values(map).find(isFilled) || ''
   }
 
   formatUrl(url) {

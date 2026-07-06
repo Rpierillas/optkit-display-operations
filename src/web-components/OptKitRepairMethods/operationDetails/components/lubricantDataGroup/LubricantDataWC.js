@@ -7,7 +7,10 @@
  *
  * Props (propriétés JS) :
  *   component         Object  — { description: { map: {...} } }
+ *   lubricantRows     Array   — [{ group, viscosity, temperature, qualities: [], remarks: [] }]
+ *                               (mode groupé : un header, N lignes, qualités énumérées)
  *   lubricantSystem   Object  — { group, viscosity, quality, temperature, remark }
+ *                               (mode legacy : une seule ligne)
  *   haynesLang        String  — code langue HaynesPro
  *   isPrint           Boolean
  */
@@ -17,7 +20,8 @@ class LubricantData extends HTMLElement {
     this.attachShadow({ mode: 'open' })
     this._component = null
     this._lubricantSystem = null
-    this._haynesLang = 'en'
+    this._lubricantRows = null
+    this._haynesLang = ''
     this._isPrint = false
   }
 
@@ -33,6 +37,7 @@ class LubricantData extends HTMLElement {
 
   set component(v)       { this._component = v;       this._render() }
   set lubricantSystem(v) { this._lubricantSystem = v;  this._render() }
+  set lubricantRows(v)   { this._lubricantRows = v;    this._render() }
   set haynesLang(v)      { this._haynesLang = v;       this._render() }
   set isPrint(v)         { this._isPrint = !!v;        this._render() }
 
@@ -42,7 +47,18 @@ class LubricantData extends HTMLElement {
 
   _hl(map) {
     if (!map) return ''
-    return map[this._haynesLang] || map[2057] || map['en'] || Object.values(map).find(v => v) || ''
+    if (!map || typeof map !== 'object') return ''
+    const isFilled = (v) => typeof v === 'string' && v.trim() !== ''
+    // 1. Override explicite éventuel (haynes-lang défini par l'hôte)
+    if (this._haynesLang && isFilled(map[this._haynesLang])) return map[this._haynesLang]
+    // 2. Langue demandée à l'API : la clé non-anglaise du map (contrat HaynesPro :
+    //    le map contient 2057 (EN, toujours) + la langue du request header)
+    for (const key of Object.keys(map)) {
+      if (key !== '2057' && isFilled(map[key])) return map[key]
+    }
+    // 3. Anglais par défaut
+    if (isFilled(map['2057'])) return map['2057']
+    return Object.values(map).find(isFilled) || ''
   }
 
   // ── styles ─────────────────────────────────────────────────────────────────
@@ -159,16 +175,85 @@ class LubricantData extends HTMLElement {
 
   // ── render ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Rend une ligne de données (mode groupé) : groupe | viscosité | qualités énumérées | température.
+   */
+  _renderRow(row, index) {
+    const groupLabel = this._hl(row.group?.description?.map)
+    const viscosity = row.viscosity?.description || ''
+    const temperature = row.temperature ? this._hl(row.temperature.description?.map) : ''
+    const qualities = (row.qualities || []).map(q => q?.description).filter(Boolean)
+    const remarks = (row.remarks || []).map(r => this._hl(r?.description?.map)).filter(Boolean)
+    const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd'
+
+    return `
+      <tr class="data-row ${rowClass}">
+        <td class="label-cell" style="font-weight:700;color:var(--ipd-primary);">${groupLabel}</td>
+        <td class="value-cell">${viscosity ? `<span class="value-chip">${viscosity}</span>` : ''}</td>
+        <td class="value-cell">
+          ${qualities.map(q => `<span class="value-chip" style="background:#006B6A;margin:2px 4px 2px 0;">${q}</span>`).join('')}
+        </td>
+        <td class="value-cell">${temperature ? `<span style="font-size:13px;color:#555;">${temperature}</span>` : ''}</td>
+      </tr>
+      ${remarks.map(r => `
+      <tr>
+        <td class="remark-cell" colspan="4">
+          <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:middle;margin-right:6px;fill:#FFC200;">
+            <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+          </svg>
+          ${r}
+        </td>
+      </tr>`).join('')}
+    `
+  }
+
+  _renderHeader(compTitle) {
+    if (!compTitle) return ''
+    return `
+      <thead>
+        <tr class="header-row">
+          <th class="header-cell" colspan="4">
+            <svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;margin-right:8px;fill:#fff;opacity:0.9;">
+              <path d="M22.7,19L13.6,9.9C14.5,7.6 14,4.9 12.1,3C10.1,1 7.1,0.6 4.7,1.7L9,6L6,9L1.6,4.7C0.4,7.1 0.9,10.1 2.9,12.1C4.8,14 7.5,14.5 9.8,13.6L18.9,22.7C19.3,23.1 19.9,23.1 20.3,22.7L22.6,20.4C23.1,20 23.1,19.3 22.7,19Z"/>
+            </svg>
+            ${compTitle}
+          </th>
+        </tr>
+      </thead>`
+  }
+
   _render() {
-    const ls = this._lubricantSystem
     const comp = this._component
+    const compTitle = comp ? this._hl(comp.description?.map) : ''
+
+    // ── Mode groupé : un header, N lignes fusionnées ──
+    if (Array.isArray(this._lubricantRows)) {
+      if (!this._lubricantRows.length) {
+        this.shadowRoot.innerHTML = `${this._getStyles()}<p class="empty">Aucune donnée disponible</p>`
+        return
+      }
+      this.shadowRoot.innerHTML = `
+        ${this._getStyles()}
+        <div class="lubricant-container">
+          <table class="lubricant-table">
+            ${this._renderHeader(compTitle)}
+            <tbody>
+              ${this._lubricantRows.map((row, i) => this._renderRow(row, i)).join('')}
+            </tbody>
+          </table>
+        </div>
+      `
+      return
+    }
+
+    // ── Mode legacy : un seul item ──
+    const ls = this._lubricantSystem
 
     if (!ls) {
       this.shadowRoot.innerHTML = `${this._getStyles()}<p class="empty">Aucune donnée disponible</p>`
       return
     }
 
-    const compTitle = comp ? this._hl(comp.description?.map) : ''
     const groupLabel = this._hl(ls.group?.description?.map)
     const viscosity = ls.viscosity?.description || ''
     const quality = ls.quality?.description || ''

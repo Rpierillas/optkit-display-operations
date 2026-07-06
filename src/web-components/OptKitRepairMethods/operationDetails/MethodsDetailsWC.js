@@ -5,6 +5,24 @@
 
 // ✅ PLUS D'IMPORTS STATIQUES ICI
 
+// Passer à false pour couper les logs de diagnostic du filtrage config
+const CONFIG_FILTER_DEBUG = true
+
+/**
+ * Matching par mot entier (insensible à la casse) pour éviter les faux positifs
+ * de substring : "EAT" ne doit pas matcher dans "heater".
+ * Fonctionne avec les codes alphanumériques (EA3, 486, P84) et les libellés
+ * multi-mots ("Reinforced suspension").
+ */
+function labelInTitle(title, label) {
+  if (!title || !label) return false
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // \b ne fonctionne pas bien en fin de motif avec certains caractères — on
+  // encadre par début/fin de chaîne ou non-alphanumérique
+  const re = new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`, 'i')
+  return re.test(title)
+}
+
 class MethodsDetails extends HTMLElement {
   constructor() {
     super()
@@ -19,7 +37,10 @@ class MethodsDetails extends HTMLElement {
     this._index = 0
     this._isSingleItem = false
     this._lang = 'en'
-    this._haynesLang = '2057'
+    this._haynesLang = ''
+    this._selectedConfig = {}
+    this._configLabels = {}           // { [groupId]: { axisLabel, valueLabel, valueLabelEn } }
+    this._knownConfigLabelsEn = {}    // { [groupId]: [labelEn...] } — options connues par axe
 
     this.state = {
       showSchematics: false,
@@ -114,8 +135,29 @@ class MethodsDetails extends HTMLElement {
 
   get haynesLang() { return this._haynesLang }
   set haynesLang(value) {
-    this._haynesLang = value || '2057'
+    this._haynesLang = value || ''
     if (this.isConnected && this._domReady) this.updateChildComponents()
+  }
+
+  get selectedConfig() { return this._selectedConfig }
+  set selectedConfig(value) {
+    this._selectedConfig = value || {}
+    // Un changement de config re-render pour filtrer les composants affichés
+    if (this.isConnected) {
+      this._domReady = false
+      this.render()
+    }
+  }
+
+  get configLabels() { return this._configLabels }
+  set configLabels(value) {
+    this._configLabels = value || {}
+  }
+
+  get knownConfigLabelsEn() { return this._knownConfigLabelsEn }
+  set knownConfigLabelsEn(value) {
+    // Objet { [groupId]: [labelEn, ...] } — toutes les options connues par axe
+    this._knownConfigLabelsEn = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {}
   }
 
   // ============================================
@@ -206,9 +248,18 @@ class MethodsDetails extends HTMLElement {
   }
 
   formatHaynesLang(map) {
-    if (!map) return ''
-    const keys = Object.keys(map)
-    return keys.length > 0 ? map[keys[0]] : ''
+    if (!map || typeof map !== 'object') return ''
+    const isFilled = (v) => typeof v === 'string' && v.trim() !== ''
+    // 1. Override explicite éventuel (haynes-lang défini par l'hôte)
+    if (this._haynesLang && isFilled(map[this._haynesLang])) return map[this._haynesLang]
+    // 2. Langue demandée à l'API : la clé non-anglaise du map (contrat HaynesPro :
+    //    le map contient 2057 (EN, toujours) + la langue du request header)
+    for (const key of Object.keys(map)) {
+      if (key !== '2057' && isFilled(map[key])) return map[key]
+    }
+    // 3. Anglais par défaut
+    if (isFilled(map['2057'])) return map['2057']
+    return Object.values(map).find(isFilled) || ''
   }
 
   isLastItem(itemsLength, currentItem) {
@@ -236,24 +287,7 @@ class MethodsDetails extends HTMLElement {
   }
 
   _applyPanelState() {
-    const shadow = this.shadowRoot
-    if (!shadow) return
-
-    const panel = shadow.querySelector('.expansion-panel')
-    const content = shadow.querySelector('.expansion-panel-content')
-    const header = shadow.querySelector('.expansion-panel-header')
-
-    if (!panel || !content) return
-
-    if (this.state.isOpened) {
-      panel.classList.add('is-open')
-      content.style.display = ''
-      header?.setAttribute('aria-expanded', 'true')
-    } else {
-      panel.classList.remove('is-open')
-      content.style.display = 'none'
-      header?.setAttribute('aria-expanded', 'false')
-    }
+    // Panel expansible supprimé — contenu affiché directement
   }
 
   // ============================================
@@ -307,6 +341,7 @@ class MethodsDetails extends HTMLElement {
   updateChildComponents() {
     this.repairManualRefs.forEach((webComponent, index) => {
       if (webComponent && this._item.repairManuals?.[index]) {
+        webComponent.haynesLang = this._haynesLang
         webComponent.instruction = this._item.repairManuals[index]
         webComponent.operations = this._operations
         webComponent.operationsDetails = this._operationDetails
@@ -314,18 +349,32 @@ class MethodsDetails extends HTMLElement {
     })
 
     this.adjustmentRefs.forEach((webComponent, key) => {
-      const [componentIndex, adjustmentIndex] = key.split('-').map(Number)
+      const [componentIndex, filteredIndex] = key.split('-').map(Number)
       const component = this._item.components?.[componentIndex]
-      const adjustmentItem = component?.adjustmentSystem?.items?.[adjustmentIndex]
+      if (!component || !webComponent) return
 
-      if (webComponent && component && adjustmentItem) {
-        webComponent.adjustmentItem = adjustmentItem
-        webComponent.component = component
-        webComponent.operations = this._operations
-        webComponent.group = component.group?.mainGroups?.[0] || ''
-        webComponent.isPrint = this._isPrint
-        webComponent.haynesLang = this._haynesLang
+      const { filteredItems } = this._filterAdjustmentItems(
+        component.adjustmentSystem?.items,
+        this._selectedConfig
+      )
+      const adjustmentItem = filteredItems[filteredIndex]
+      if (!adjustmentItem) return
+
+      const filteredOperations = {
+        ...this._operations,
+        adjustmentSystem: {
+          ...(this._operations?.adjustmentSystem || {}),
+          items: filteredItems,
+        }
       }
+
+      webComponent.adjustmentItem = adjustmentItem
+      webComponent.adjustmentIndex = filteredIndex
+      webComponent.component = component
+      webComponent.operations = filteredOperations
+      webComponent.group = component.group?.mainGroups?.[0] || ''
+      webComponent.isPrint = this._isPrint
+      webComponent.haynesLang = this._haynesLang
     })
 
     this.technicalDrawingsRefs.forEach((webComponent, key) => {
@@ -344,15 +393,14 @@ class MethodsDetails extends HTMLElement {
       }
     })
 
-    // ── lubricant-data ───────────────────────────────────────────────────────
+    // ── lubricant-data (groupé par section, lignes fusionnées) ──────────────
+    const groupedLubricants = this._collectGroupedLubricants()
     this.shadowRoot.querySelectorAll('lubricant-data').forEach(el => {
-      const componentIndex = parseInt(el.getAttribute('data-component-index'), 10)
-      const lubIdx = parseInt(el.getAttribute('data-lubricant-index'), 10)
-      const component = this._item.components?.[componentIndex]
-      const lubricantSystem = component?.lubricantSystem?.items?.[lubIdx]
-      if (component && lubricantSystem) {
-        el.component = component
-        el.lubricantSystem = lubricantSystem
+      const groupIdx = parseInt(el.getAttribute('data-lubricant-group-index'), 10)
+      const entry = groupedLubricants[groupIdx]
+      if (entry) {
+        el.component = entry.component
+        el.lubricantRows = entry.rows
         el.haynesLang = this._haynesLang
         el.isPrint = this._isPrint
       }
@@ -377,9 +425,6 @@ class MethodsDetails extends HTMLElement {
   attachEventListeners() {
     const shadow = this.shadowRoot
 
-    shadow.querySelector('.expansion-panel-header')
-      ?.addEventListener('click', this.togglePanel.bind(this))
-
     shadow.querySelectorAll('repairs-data-group').forEach((el, index) => {
       this.repairManualRefs.set(index, el)
       el.addEventListener('show-schematics', (e) => this.openSvgImageContainer(e.detail))
@@ -387,8 +432,8 @@ class MethodsDetails extends HTMLElement {
 
     shadow.querySelectorAll('adjustment-data-group').forEach((el) => {
       const componentIndex = parseInt(el.getAttribute('data-component-index'), 10)
-      const adjustmentIndex = parseInt(el.getAttribute('data-adjustment-index'), 10)
-      const key = `${componentIndex}-${adjustmentIndex}`
+      const filteredIndex = parseInt(el.getAttribute('data-filtered-index'), 10)
+      const key = `${componentIndex}-${filteredIndex}`
       this.adjustmentRefs.set(key, el)
       el.addEventListener('show-schematics', (e) => this.openSvgImageContainer(e.detail))
     })
@@ -465,62 +510,176 @@ class MethodsDetails extends HTMLElement {
   }
 
   generateHTML() {
-    const hasLocationSystems = this._formattedLocationSystems?.length > 0 && this._item.locationSystems
-
     return `
       <div class="methods-details">
-        <div class="expansion-panel ${this.state.isOpened ? 'is-open' : ''}">
-          <button class="expansion-panel-header" aria-expanded="${this.state.isOpened}">
-            <div class="header-content">
-              <div class="header-icon">
-                ${hasLocationSystems ? this.getCarIcon() : this.getDocumentIcon()}
-              </div>
-              <h2 class="header-title">
-                ${this.formatSentenceCase(this._item.properties?.description || '')}
-              </h2>
-              <div class="header-chevron">
-                <svg class="chevron-icon" viewBox="0 0 24 24">
-                  <path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z" />
-                </svg>
-              </div>
-            </div>
-          </button>
-
-          <div class="expansion-panel-content" ${this.state.isOpened ? '' : 'style="display: none;"'}>
-            <div class="panel-body">
-              ${this.renderComponents()}
-              ${this.renderRepairManuals()}
-              ${this.renderLocationSystems()}
-            </div>
-          </div>
+        <div class="panel-body">
+          ${this.renderComponents()}
+          ${this.renderLubricantSection()}
+          ${this.renderRepairManuals()}
+          ${this.renderLocationSystems()}
         </div>
       </div>
     `
   }
 
+  /**
+   * Vérifie si un component doit être affiché selon la config sélectionnée.
+   *
+   * Règle : un component est visible si AU MOINS UN des axes sélectionnés
+   * matche dans ses technicalCriteria. Il est masqué uniquement si un axe
+   * qu'il déclare explicitement ne correspond à AUCUNE valeur sélectionnée
+   * ET qu'aucun autre axe ne matche non plus.
+   *
+   * Exemples :
+   * - Sélection 486 → affiche tout ce qui a 486 (même sans axe suspension)
+   * - Sélection Suspension confort → affiche tout ce qui a Suspension confort
+   *   (même si le code équipement ne matche pas)
+   * - Component sans technicalCriteria → générique, toujours visible
+   */
+  _componentMatchesConfig(component) {
+    const selectedConfig = this._selectedConfig
+    if (!selectedConfig || !Object.keys(selectedConfig).length) return true
+
+    const criteria = component?.technicalCriteria
+    const compName = component?.description?.map?.['2057'] || component?.description?.map?.['1036'] || '(sans description)'
+
+    if (!Array.isArray(criteria) || criteria.length === 0) {
+      if (CONFIG_FILTER_DEBUG) console.debug(`[config-filter] component "${compName}" → VISIBLE (pas de technicalCriteria)`)
+      return true
+    }
+
+    // Règle : chaque axe DÉCLARÉ doit matcher (AND). Axes non déclarés ignorés.
+    let visible = true
+    const axisReport = []
+
+    for (const [groupId, selectedDescId] of Object.entries(selectedConfig)) {
+      const tc = criteria.find(c => String(c?.group?.id) === String(groupId))
+      if (!tc) { axisReport.push(`${groupId}: non déclaré`); continue }
+
+      const declaredIds = (tc.values || []).map(v => String(v.descriptionId))
+      const hasMatch = declaredIds.includes(String(selectedDescId))
+      axisReport.push(`${groupId}: déclaré [${declaredIds.join(',')}] vs sélectionné ${selectedDescId} → ${hasMatch ? 'MATCH' : 'NO'}`)
+      if (!hasMatch) visible = false
+    }
+
+    if (CONFIG_FILTER_DEBUG) {
+      console.debug(`[config-filter] component "${compName}" → ${visible ? 'VISIBLE' : 'MASQUÉ'} | ${axisReport.join(' | ')}`)
+    }
+    return visible
+  }
+
   renderComponents() {
     if (!this._item.components?.length) return ''
-    return this._item.components.map((component, componentIndex) => `
-      <div class="component-section">
-        ${this.renderAdjustmentData(component, componentIndex)}
-        ${this.renderLubricantData(component, componentIndex)}
-        ${this.renderRepairTimeData(component, componentIndex)}
-        ${this.renderTechnicalDrawings(component, componentIndex)}
-      </div>
-    `).join('')
+    // On itère avec l'index réel du tableau pour que les refs (data-component-index)
+    // restent cohérentes avec this._item.components[componentIndex]
+    return this._item.components
+      .map((component, componentIndex) => {
+        if (!this._componentMatchesConfig(component)) return ''
+        return `
+          <div class="component-section">
+            ${this.renderAdjustmentData(component, componentIndex)}
+            ${this.renderRepairTimeData(component, componentIndex)}
+            ${this.renderTechnicalDrawings(component, componentIndex)}
+          </div>
+        `
+      }).join('')
+  }
+
+  /**
+   * Filtre les items d'un adjustmentSystem selon selectedConfig + configLabels.
+   *
+   * Règle (OR entre les axes) : un item est visible si AU MOINS UN axe
+   * sélectionné matche. Il est masqué uniquement s'il est discriminant
+   * sur la config ET qu'aucun axe sélectionné ne correspond.
+   *
+   * Stratégie :
+   * 1. Item avec technicalCriteria → match par descriptionId (OR entre axes)
+   * 2. Item sans technicalCriteria → analyse du titre anglais
+   *    (header.description.map["2057"]) :
+   *    a. Le titre mentionne-t-il une valeur de config CONNUE
+   *       (parmi toutes les options de tous les axes) ? Si non → générique, visible.
+   *       (ex : "Electrical", "Capacities" ne mentionnent rien → visibles)
+   *    b. Si oui → visible seulement si AU MOINS UNE valeur SÉLECTIONNÉE
+   *       figure dans le titre.
+   *       (ex : titre "Equipment code 485, Comfort suspension",
+   *        sélection 486 + Comfort suspension → "Comfort suspension" matche → visible ;
+   *        sélection 486 + Standard suspension → rien ne matche → masqué)
+   */
+  _filterAdjustmentItems(items, selectedConfig) {
+    if (!items?.length) return { filteredItems: [] }
+
+    const hasConfig = selectedConfig && Object.keys(selectedConfig).length > 0
+    if (!hasConfig) return { filteredItems: items }
+
+    const configLabels = this._configLabels || {}
+    const knownPerAxis = this._knownConfigLabelsEn || {}
+
+    const filteredItems = []
+    items.forEach((item) => {
+      const criteria = item?.technicalCriteria
+
+      if (Array.isArray(criteria) && criteria.length > 0) {
+        // ── Stratégie 1 : technicalCriteria — chaque axe DÉCLARÉ doit matcher ──
+        let matches = true
+        for (const [groupId, selectedDescId] of Object.entries(selectedConfig)) {
+          const tc = criteria.find(c => String(c?.group?.id) === String(groupId))
+          if (!tc) continue // axe non déclaré → ignoré
+          const hasMatch = tc.values?.some(v => String(v.descriptionId) === String(selectedDescId))
+          if (!hasMatch) { matches = false; break }
+        }
+        if (matches) filteredItems.push(item)
+      } else {
+        // ── Stratégie 2 : titre anglais, axe par axe ──
+        // Pour chaque axe : si le titre mentionne UNE valeur connue de cet axe,
+        // alors la valeur SÉLECTIONNÉE de cet axe doit y figurer.
+        // Un titre qui ne mentionne aucun axe est générique → visible.
+        const titleEn = item?.header?.description?.map?.['2057'] || ''
+        if (!titleEn) {
+          filteredItems.push(item)
+          return
+        }
+
+        let matches = true
+        const report = []
+        for (const [groupId, labels] of Object.entries(configLabels)) {
+          const knownForAxis = knownPerAxis[groupId] || []
+          const axisMentioned = knownForAxis.some(lbl => labelInTitle(titleEn, lbl))
+          if (!axisMentioned) { report.push(`${groupId}: non mentionné`); continue }
+
+          const selectedLbl = labels?.valueLabelEn || ''
+          const hasMatch = selectedLbl && labelInTitle(titleEn, selectedLbl)
+          report.push(`${groupId}: mentionné, "${selectedLbl}" → ${hasMatch ? 'MATCH' : 'NO'}`)
+          if (!hasMatch) { matches = false; break }
+        }
+
+        if (CONFIG_FILTER_DEBUG) {
+          console.debug(`[config-filter] adjItem "${titleEn}" → ${matches ? 'VISIBLE' : 'MASQUÉ'} | ${report.join(' | ') || 'titre générique'}`)
+        }
+        if (matches) filteredItems.push(item)
+      }
+    })
+    return { filteredItems }
   }
 
   renderAdjustmentData(component, componentIndex) {
     if (!component.adjustmentData || !component.adjustmentSystem?.items) return ''
     const title = this.formatHaynesLang(component.description?.map)
+
+    const { filteredItems } = this._filterAdjustmentItems(
+      component.adjustmentSystem.items,
+      this._selectedConfig
+    )
+
+    if (!filteredItems.length) return ''
+
     return `
       <div class="data-section">
         ${title ? `<h3 class="component-title">${title}</h3>` : ''}
-        ${component.adjustmentSystem.items.map((_, adjustmentIndex) => `
+        ${filteredItems.map((_, filteredIndex) => `
           <div class="data-item">
             <adjustment-data-group
               data-component-index="${componentIndex}"
-              data-adjustment-index="${adjustmentIndex}"
+              data-filtered-index="${filteredIndex}"
             ></adjustment-data-group>
           </div>
         `).join('')}
@@ -529,13 +688,83 @@ class MethodsDetails extends HTMLElement {
   }
 
   renderLubricantData(component, componentIndex) {
-    if (!component.lubricantData || !component.lubricantSystem?.items) return ''
+    // Remplacé par renderLubricantSection() global
+    return ''
+  }
+
+  /**
+   * Regroupe les lubrifiants par SECTION (titre du component) puis fusionne
+   * les lignes quasi identiques à l'intérieur de chaque section.
+   *
+   * - Une section = un titre unique (component.description, pivot EN).
+   *   Deux components au titre identique sont fusionnés en une seule section.
+   * - Une ligne = (group, viscosity, temperature). Les items qui ne diffèrent
+   *   que par la qualité sont fusionnés : leurs qualités sont énumérées
+   *   côte à côte sur la même ligne.
+   *
+   * Retourne : [{ component, rows: [{ group, viscosity, temperature, qualities: [], remarks: [] }] }]
+   */
+  _collectGroupedLubricants() {
+    const sections = new Map() // titleKey → { component, rowMap: Map }
+    if (!this._item.components?.length) return []
+
+    for (const component of this._item.components) {
+      if (!component.lubricantData || !component.lubricantSystem?.items?.length) continue
+      if (!this._componentMatchesConfig(component)) continue // respecter la config véhicule
+
+      const titleKey = component.description?.map?.['2057']
+        || JSON.stringify(component.description?.map || component.id)
+
+      if (!sections.has(titleKey)) {
+        sections.set(titleKey, { component, rowMap: new Map() })
+      }
+      const section = sections.get(titleKey)
+
+      for (const lubItem of component.lubricantSystem.items) {
+        const rowKey = [
+          lubItem.group?.id ?? '',
+          lubItem.viscosity?.id ?? '',
+          lubItem.temperature?.id ?? '',
+        ].join('|')
+
+        if (!section.rowMap.has(rowKey)) {
+          section.rowMap.set(rowKey, {
+            group: lubItem.group,
+            viscosity: lubItem.viscosity,
+            temperature: lubItem.temperature,
+            qualities: [],
+            remarks: [],
+            _qualityIds: new Set(),
+            _remarkIds: new Set(),
+          })
+        }
+        const row = section.rowMap.get(rowKey)
+
+        if (lubItem.quality && !row._qualityIds.has(lubItem.quality.id)) {
+          row._qualityIds.add(lubItem.quality.id)
+          row.qualities.push(lubItem.quality)
+        }
+        if (lubItem.remark && !row._remarkIds.has(lubItem.remark.id)) {
+          row._remarkIds.add(lubItem.remark.id)
+          row.remarks.push(lubItem.remark)
+        }
+      }
+    }
+
+    return Array.from(sections.values()).map(({ component, rowMap }) => ({
+      component,
+      rows: Array.from(rowMap.values()).map(({ _qualityIds, _remarkIds, ...row }) => row),
+    }))
+  }
+
+  renderLubricantSection() {
+    const grouped = this._collectGroupedLubricants()
+    if (!grouped.length) return ''
     return `
       <div class="data-section">
-        ${component.lubricantSystem.items.map((_, lubIdx) => `
+        ${grouped.map((_, i) => `
           <lubricant-data
-            data-component-index="${componentIndex}"
-            data-lubricant-index="${lubIdx}"
+            data-lubricant-group-index="${i}"
             haynes-lang="${this._haynesLang}"
             ${this._isPrint ? 'is-print' : ''}
           ></lubricant-data>
@@ -652,23 +881,7 @@ class MethodsDetails extends HTMLElement {
         * { box-sizing: border-box; margin: 0; padding: 0; }
         .methods-details { width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
         .loading-message { padding: 40px 20px; text-align: center; color: var(--ipd-text-secondary); background: var(--ipd-light-gray); border-radius: 8px; margin: 20px; }
-        .expansion-panel { background: var(--ipd-white); border-radius: 12px; border: 1px solid var(--ipd-border); margin-bottom: 32px; overflow: hidden; transition: box-shadow 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
-        .expansion-panel:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
-        .expansion-panel:last-of-type { margin-bottom: 4px; }
-        .expansion-panel-header { width: 100%; background: var(--ipd-white); border: none; padding: 20px 24px; cursor: pointer; transition: background-color 0.2s ease; display: block; text-align: left; font-family: inherit; }
-        .expansion-panel-header:hover { background-color: var(--ipd-light-gray); }
-        .expansion-panel-header:focus { outline: 2px solid var(--ipd-primary); outline-offset: -2px; }
-        .is-open .expansion-panel-header { border-bottom: 1px solid var(--ipd-border); }
-        .header-content { display: flex; align-items: center; gap: 16px; }
-        .header-icon { flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
-        .header-icon .icon { width: 100%; height: 100%; fill: var(--ipd-primary); }
-        .header-title { flex: 1; margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--ipd-text-primary); line-height: 1.4; }
-        .header-chevron { flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease; }
-        .is-open .header-chevron { transform: rotate(90deg); }
-        .chevron-icon { width: 100%; height: 100%; fill: var(--ipd-text-secondary); }
-        .expansion-panel-content { background: var(--ipd-white); animation: slideDown 0.3s ease; }
-        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-        .panel-body { padding: 24px; }
+        .panel-body { width: 100%; }
         .component-section { margin-bottom: 24px; }
         .component-section:last-child { margin-bottom: 0; }
         .data-section { margin-bottom: 16px; }
@@ -691,8 +904,8 @@ class MethodsDetails extends HTMLElement {
         .btn-close:hover svg { color: var(--ipd-primary); }
         .modal-body { flex: 1; overflow-y: auto; padding: 24px; display: flex; align-items: center; justify-content: center; }
         .modal-image { max-width: 100%; max-height: calc(90vh - 150px); width: auto; height: auto; display: block; margin: 0 auto; }
-        @media (max-width: 599px) { .expansion-panel-header { padding: 16px; } .panel-body { padding: 16px; } .header-title { font-size: 1.1rem; } .component-title { margin-left: 12px; font-size: 1rem; } }
-        @media print { .expansion-panel { box-shadow: none; border: 1px solid var(--ipd-border); page-break-inside: avoid; } .expansion-panel-header { background: var(--ipd-white) !important; } .header-chevron { display: none; } .expansion-panel-content { display: block !important; } .modal-overlay { display: none; } }
+        @media (max-width: 599px) { .panel-body { padding: 0; } .component-title { margin-left: 12px; font-size: 1rem; } }
+        @media print { .modal-overlay { display: none; } }
       </style>
     `
   }
